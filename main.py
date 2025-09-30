@@ -1,13 +1,13 @@
 import os
-import streamlit as st
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.callbacks.manager import get_openai_callback
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import ChatOpenAI
+import streamlit as st
 from langchain import hub
-from utils import read_pdf, build_index, format_docs
+from langchain_community.callbacks.manager import get_openai_callback
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+from langchain_openai import ChatOpenAI
+
+from utils import build_index, format_docs, read_pdf
 
 st.set_page_config(page_title="PDF Q&A with RAG", page_icon="📄", layout="wide")
 st.title("📄 PDF Q&A with RAG")
@@ -33,7 +33,7 @@ with st.sidebar:
             "gpt-5-nano",
             "gpt-5-mini",
         ],
-        index=4,
+        index=3,
         help="Select the model to use for question answering.",
     )
 
@@ -63,29 +63,25 @@ with st.sidebar:
     )
 
 st.markdown(
-    "Upload one or more PDFs to be indexed in RAM. Then ask questions about their content."
+    "Upload one or more PDFs to be indexed. Then ask questions about their content."
 )
 
 uploaded_files = st.file_uploader(
     "Upload PDF files", type=["pdf"], accept_multiple_files=True
 )
 
-ss = st.session_state
-ss.setdefault("retriever", None)
-ss.setdefault("sources", None)
-ss.setdefault("prompt", None)
-ss.setdefault("llm", None)
+state = st.session_state
+state.setdefault("retriever", None)
+state.setdefault("sources", None)
+state.setdefault("prompt", None)
+state.setdefault("llm", None)
+state.setdefault("chain", None)
 
-if ss.prompt is None:
-    ss.prompt = hub.pull("rlm/rag-prompt")
+if state.prompt is None:
+    state.prompt = hub.pull("rlm/rag-prompt")
 
-if ss.llm is None:
-    ss.llm = ChatOpenAI(model=model_name, temperature=0)
-
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None
-if "sources" not in st.session_state:
-    st.session_state.sources = None
+if state.llm is None:
+    state.llm = ChatOpenAI(model=model_name)
 
 
 if uploaded_files and st.button("Index Documents"):
@@ -97,40 +93,43 @@ if uploaded_files and st.button("Index Documents"):
                 all_docs.extend(docs)
                 st.toast(f"Indexed {getattr(file, 'name', 'file')} ✅")
             except Exception as e:
-                st.toast(f"Error processing {getattr(file, 'name', 'file')}: {e}", icon="❌")
+                st.toast(
+                    f"Error processing {getattr(file, 'name', 'file')}: {e}", icon="❌"
+                )
+
     if not all_docs:
         st.warning("No valid documents found in the uploaded files.")
-        ss.retriever = None
+        state.retriever = None
+
     else:
-        ss.retriever = build_index(all_docs, chunk_size, chunk_overlap, k=int(k))
-        ss.sources = sorted(list({d.metadata['source'] for d in all_docs}))
+        state.retriever = build_index(all_docs, chunk_size, chunk_overlap, k=int(k))
+        state.sources = sorted(list({d.metadata["source"] for d in all_docs}))
+        state.chain = (
+            {
+                "context": state.retriever | RunnableLambda(format_docs),
+                "question": RunnablePassthrough(),
+            }
+            | state.prompt
+            | state.llm
+            | StrOutputParser()
+        )
         st.success("Indexing complete! Ask questions below.")
-elif ss.retriever:
+
+elif state.retriever:
     st.success("Indexing complete! Ask questions below.")
 
 st.divider()
 
-if ss.retriever:
+if state.retriever:
     question = st.text_input("Type question...")
 
     if question:
         with st.spinner():
-            
-            chain = (
-                # retrieve context
-                {
-                    "context": ss.retriever | RunnableLambda(format_docs), 
-                    "question": RunnablePassthrough()}
-                # build prompt
-                | ss.prompt 
-                # call LLM
-                | ss.llm 
-                # parse output
-                | StrOutputParser()
-            ) 
             with get_openai_callback() as cb:
-                answer = chain.invoke(question)
-                print(f"Total Tokens: {cb.total_tokens}, Prompt Tokens: {cb.prompt_tokens}, Completion Tokens: {cb.completion_tokens}, Total Cost (USD): ${cb.total_cost:.6f}")
+                answer = state.chain.invoke(question)
+                print(
+                    f"Total Tokens: {cb.total_tokens}, Prompt Tokens: {cb.prompt_tokens}, Completion Tokens: {cb.completion_tokens}, Total Cost (USD): ${cb.total_cost:.6f}"
+                )
             if not answer:
                 st.error("No answer returned from the model.")
             else:

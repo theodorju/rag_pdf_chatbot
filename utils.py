@@ -1,10 +1,11 @@
-import tiktoken
 from io import BytesIO
-from pypdf import PdfReader
-from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+
+import tiktoken
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pypdf import PdfReader
 
 
 def read_pdf(file):
@@ -28,7 +29,9 @@ def build_index(docs, chunk_size, chunk_overlap, k):
     enc = tiktoken.encoding_for_model("text-embedding-3-small")
     total_tokens = sum(len(enc.encode(chunk.page_content)) for chunk in splits)
     print(f"Total chunks: {len(splits)}, total tokens: {total_tokens}")
-    vectorstore = FAISS.from_documents(splits, OpenAIEmbeddings(model="text-embedding-3-small"))
+    vectorstore = FAISS.from_documents(
+        splits, OpenAIEmbeddings(model="text-embedding-3-small")
+    )
     # create a vectorstore retriever
     # https://python.langchain.com/api_reference/core/vectorstores/langchain_core.vectorstores.base.VectorStoreRetriever.html
     return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": k})
